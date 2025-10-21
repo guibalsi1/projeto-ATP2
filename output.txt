@@ -1,0 +1,3 @@
+First line of the document.
+Second line of the document.
+Third line of the document. - texto adicionado!
