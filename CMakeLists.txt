@@ -5,8 +5,7 @@ set(CMAKE_C_STANDARD 11)
 
 add_library(meditor STATIC meditor.c)
 
-add_executable(projeto-main main.c
-        command-line-meditor.c)
+add_executable(projeto-main main.c)
 
 target_link_libraries(projeto-main PRIVATE meditor)
 
