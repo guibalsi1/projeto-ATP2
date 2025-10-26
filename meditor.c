@@ -11,8 +11,8 @@
 // Fiz isso para facilitar a implementação do undo/redo
 struct Operation;
 static void clear_stack(struct Operation **stack);
-static void undo(void);
-static void redo(void);
+static int undo(void);
+static int redo(void);
 static struct Operation *undo_stack = NULL;
 static struct Operation *redo_stack = NULL;
 
@@ -439,7 +439,7 @@ static char *get_line_text(int line_number) {
     return current->content;
 }
 
-// Helper: insere uma linha SEM substituir (1-based position)
+// Função para inserir uma linha em uma posição específica (sem substituir)
 static void insert_line_at(const char *text, int position) {
     if (!text) return;
     create_document();
@@ -478,86 +478,62 @@ static void insert_line_at(const char *text, int position) {
     doc->line_count++;
 }
 
-// Implementação da função undo
-static void undo(void) {
-    // Desempilha a última operação da pilha de undo
-    // Como estou a usar de forma estática, a pilha é global
+// Implementação da função undo (retorna 1 se aplicou, 0 se não havia)
+static int undo(void) {
     Operation *op = pop_operation(&undo_stack);
-    // Se não houver operação para desfazer, retorna
-    if (!op) { printf("Nada para desfazer.\n"); return; }
-    // switch para cada tipo de operação
+    if (!op) { printf("Nada para desfazer.\n"); return 0; }
     switch (op->type) {
-        // Caso de adicionar linha
         case CMD_ADD_LINE:
-            // Se a linha existia antes, restaura o texto antigo
             if (op->existed_before) {
                 add_line(op->old_text, op->line_number);
-            } else { // Caso contrário, remove a linha
+            } else {
                 remove_line(op->line_number);
             }
             break;
-        // Caso de append texto
         case CMD_APPEND_TEXT:
-            // Restaura o texto antigo
             add_line(op->old_text, op->line_number);
             break;
-        // Caso de remover linha
         case CMD_REMOVE_LINE:
-            // Restaura a linha removida (inserção verdadeira)
             insert_line_at(op->old_text, op->line_number);
             break;
         case CMD_SPLIT_LINE:
-            // Desfaz o split juntando novamente as duas linhas
             join_lines(op->line_number);
             break;
         case CMD_JOIN_LINES:
-            // Desfaz o join dividindo novamente no ponto original
             split_line(op->line_number, op->split_position);
             break;
         default:
             break;
     }
-    // Empilha a operação na pilha de redo
     push_operation(&redo_stack, op);
+    return 1;
 }
 
-// Implementação da função redo
-static void redo(void) {
-    // Desempilha a última operação da pilha de redo
-    // Como estou a usar de forma estática, a pilha é global
+// Implementação da função redo (retorna 1 se aplicou, 0 se não havia)
+static int redo(void) {
     Operation *op = pop_operation(&redo_stack);
-    // Se não houver operação para refazer, retorna
-    if (!op) { printf("Nada para refazer.\n"); return; }
-    // switch para cada tipo de operação
+    if (!op) { printf("Nada para refazer.\n"); return 0; }
     switch (op->type) {
-        // Caso de adicionar linha
         case CMD_ADD_LINE:
-            // Refaz a adição da linha
             add_line(op->new_text, op->line_number);
             break;
-        // Caso de append texto
         case CMD_APPEND_TEXT:
-            // Refaz o append do texto
             add_line(op->new_text, op->line_number);
             break;
-        // Caso de remover linha
         case CMD_REMOVE_LINE:
-            // Refaz a remoção da linha
             remove_line(op->line_number);
             break;
         case CMD_SPLIT_LINE:
-            // Refaz o split usando a posição original
             split_line(op->line_number, op->split_position);
             break;
         case CMD_JOIN_LINES:
-            // Refaz o join
             join_lines(op->line_number);
             break;
         default:
             break;
     }
-    // Empilha a operação na pilha de undo
     push_operation(&undo_stack, op);
+    return 1;
 }
 
 // --- Funções expostas do editor de texto ---
@@ -566,23 +542,60 @@ static void redo(void) {
 
 // Função para inserir uma linha
 void editor_insert_line(int line_number, const char *text) {
-    // Cria uma operação
+    // Se a linha for 1 e já existir, tratar como substituição da primeira linha
+    char *old = get_line_text(line_number);
+    if (line_number == 1 && old) {
+        // Reutiliza a lógica de replace
+        // Cria uma operação
+        Operation *op = (Operation *)malloc(sizeof(Operation));
+        if (!op) return;
+        op->type = CMD_ADD_LINE;
+        op->line_number = line_number;
+        op->split_position = 0;
+        op->existed_before = 1;
+        op->old_text = old ? strdup(old) : strdup("");
+        op->new_text = text ? strdup(text) : strdup("");
+        op->next = NULL;
+        // Realiza a substituição (add_line já substitui se a linha existe)
+        add_line(text, line_number);
+        push_operation(&undo_stack, op);
+        clear_stack(&redo_stack);
+        return;
+    }
+
+    // Caso padrão: inserir antes da posição indicada (sem substituir linhas existentes)
     Operation *op = (Operation *)malloc(sizeof(Operation));
-    // Verifica se a alocação foi bem-sucedida
     if (!op) return;
-    // Preenche os dados da operação
     op->type = CMD_ADD_LINE;
     op->line_number = line_number;
     op->split_position = 0;
-    char *old = get_line_text(line_number);
-    op->existed_before = old != NULL;
-    // Salva o texto antigo e o novo texto. Usa 'strdup' para duplicar as strings
-    op->old_text = old ? strdup(old) : strdup("");
+    op->existed_before = 0; // inserção nova
+    op->old_text = strdup("");
     op->new_text = text ? strdup(text) : strdup("");
     op->next = NULL;
-    // Realiza a operação no documento
+
+    // Usa helper para inserir SEM substituir
+    insert_line_at(text, line_number);
+
+    push_operation(&undo_stack, op);
+    clear_stack(&redo_stack);
+}
+
+// Função de substituir explicitamente uma linha
+void editor_replace_line(int line_number, const char *text) {
+    char *old = get_line_text(line_number);
+    if (!old) { printf("Linha %d inexistente.\n", line_number); return; }
+    Operation *op = (Operation *)malloc(sizeof(Operation));
+    if (!op) return;
+    op->type = CMD_ADD_LINE;
+    op->line_number = line_number;
+    op->split_position = 0;
+    op->existed_before = 1;
+    op->old_text = strdup(old);
+    op->new_text = text ? strdup(text) : strdup("");
+    op->next = NULL;
+    // Substitui
     add_line(text, line_number);
-    // Empilha a operação na pilha de undo e limpa a pilha de redo
     push_operation(&undo_stack, op);
     clear_stack(&redo_stack);
 }
@@ -649,14 +662,14 @@ void editor_remove_line(int line_number) {
     clear_stack(&redo_stack);
 }
 
-// Nova função: dividir uma linha em duas partes
+// Função para dividir uma linha em duas
 void editor_split_line(int line_number, int split_position) {
     // Valida a linha
     char *old = get_line_text(line_number);
     if (!old) { printf("Linha %d inexistente.\n", line_number); return; }
     // Valida posição
     size_t len = strlen(old);
-    if (split_position < 0 || (size_t)split_position > len) { printf("Posição de split inválida.\n"); return; }
+    if (split_position < 0 || (size_t)split_position > len) { printf("Posicao de split invalida.\n"); return; }
     // Cria operação
     Operation *op = (Operation *)malloc(sizeof(Operation));
     if (!op) return;
@@ -679,7 +692,7 @@ void editor_join_lines(int line_number) {
     // Valida a primeira linha e a próxima
     char *first = get_line_text(line_number);
     char *second = get_line_text(line_number + 1);
-    if (!first || !second) { printf("Não é possível juntar: verifique as linhas %d e %d.\n", line_number, line_number + 1); return; }
+    if (!first || !second) { printf("Nao e possivel juntar: verifique as linhas %d e %d.\n", line_number, line_number + 1); return; }
     size_t first_len = strlen(first);
     // Cria operação
     Operation *op = (Operation *)malloc(sizeof(Operation));
@@ -699,7 +712,12 @@ void editor_join_lines(int line_number) {
     clear_stack(&redo_stack);
 }
 
-// Funções para undo, redo e contar linhas
-void editor_undo(void) { undo(); }
-void editor_redo(void) { redo(); }
+// Funções para undo e redo expostas (imprimem mensagens conforme pedido)
+void editor_undo(void) {undo(); }
+void editor_redo(void) {redo(); }
 size_t editor_line_count(void) { return doc ? doc->line_count : 0; }
+
+// Wrapper público para obter o texto de uma linha (retorna ponteiro interno)
+const char *editor_get_line(int line_number) {
+    return get_line_text(line_number);
+}

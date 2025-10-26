@@ -5,8 +5,6 @@
 #ifndef PROJETO_1_MEDITOR_H
 #define PROJETO_1_MEDITOR_H
 
-#include <stddef.h>
-
 void display_document(void);
 void free_document(void);
 void save_document(const char *filename);
@@ -18,8 +16,7 @@ void editor_split_line(int line_number, int split_position);
 void editor_join_lines(int line_number);
 void editor_undo(void);
 void editor_redo(void);
-
-// Optional helpers
-size_t editor_line_count(void);
+void editor_replace_line(int line_number, const char *text);
+const char *editor_get_line(int line_number);
 
 #endif //PROJETO_1_MEDITOR_H
